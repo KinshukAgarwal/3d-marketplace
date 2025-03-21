@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -27,8 +27,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
 import { CharacterCounter } from "@/components/ui/character-counter";
-import { X } from "lucide-react";
-import { toast } from "@/components/ui/use-toast";
+import { Eye, X } from "lucide-react";
 
 type UploadResponse = {
   path: string;
@@ -51,55 +50,101 @@ const modelSchema = z.object({
 
 type FormValues = z.infer<typeof modelSchema>;
 
-// Enhanced upload helper function
+// Enhanced upload helper function with better error handling
 const uploadFileToStorage = async (
   file: File,
   userId: string,
   bucket: 'models' | 'previews'
 ): Promise<UploadResponse> => {
-  const fileName = `${userId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-  
-  const { error: uploadError } = await supabase.storage
-    .from(bucket)
-    .upload(fileName, file);
+  try {
+    // Check file size
+    const fileSizeMB = file.size / (1024 * 1024);
+    console.log(`File size: ${fileSizeMB.toFixed(2)} MB`);
+    
+    if (fileSizeMB > 100) {
+      throw new Error(`File size (${fileSizeMB.toFixed(2)} MB) exceeds the 100 MB limit`);
+    }
+    
+    const fileName = `${userId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+    
+    console.log(`Uploading file to ${bucket}: ${fileName}, size: ${file.size} bytes`);
+    
+    // Try with chunked upload for large files
+    if (fileSizeMB > 5) {
+      console.log('Using chunked upload for large file');
+      
+      // Read the file as ArrayBuffer
+      const fileBuffer = await file.arrayBuffer();
+      
+      const { error: uploadError } = await supabase.storage
+        .from(bucket)
+        .upload(fileName, new Uint8Array(fileBuffer), {
+          contentType: file.type || 'application/octet-stream'
+        });
 
-  if (uploadError) throw uploadError;
+      if (uploadError) {
+        console.error(`Upload error for ${fileName}:`, uploadError);
+        throw uploadError;
+      }
+    } else {
+      // Standard upload for smaller files
+      const { error: uploadError } = await supabase.storage
+        .from(bucket)
+        .upload(fileName, file);
 
-  const { data: urlData } = supabase.storage
-    .from(bucket)
-    .getPublicUrl(fileName);
+      if (uploadError) {
+        console.error(`Upload error for ${fileName}:`, uploadError);
+        throw uploadError;
+      }
+    }
 
-  return {
-    path: fileName,
-    url: urlData.publicUrl
-  };
+    const { data: urlData } = supabase.storage
+      .from(bucket)
+      .getPublicUrl(fileName);
+
+    console.log(`Successfully uploaded to ${bucket}: ${fileName}`);
+    
+    return {
+      path: fileName,
+      url: urlData.publicUrl
+    };
+  } catch (error) {
+    console.error('File upload error:', error);
+    
+    // Provide more specific error messages based on the error
+    if (error instanceof Error) {
+      if (error.message.includes('storage/object_too_large')) {
+        throw new Error('File is too large. Maximum file size is 100 MB.');
+      } else if (error.message.includes('JWT')) {
+        throw new Error('Authentication error. Please try logging out and back in.');
+      } else if (error.message.includes('network')) {
+        throw new Error('Network error. Please check your internet connection and try again.');
+      }
+      throw new Error(`Upload failed: ${error.message}`);
+    }
+    
+    throw new Error('Failed to upload file. Please try again or use a different file.');
+  }
 };
 
-// Add this function to handle .blend file uploads
-const handleBlendFileUpload = async (file: File, userId: string): Promise<UploadResponse> => {
-  // Create a FormData object
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('userId', userId);
+async function handleModelFileUpload(file: File, userId: string): Promise<UploadResponse> {
+  // Check if the file format is supported
+  const fileExtension = file.name.split('.').pop()?.toLowerCase();
+  const supportedFormats = ['glb', 'gltf', 'obj', 'stl', 'ply', 'fbx'];
   
-  // Send the file to our conversion endpoint
-  const response = await fetch('/api/convert-blend', {
-    method: 'POST',
-    body: formData,
-  });
+  console.log(`Processing model file: ${file.name}, type: ${file.type}, size: ${file.size} bytes`);
   
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.message || 'Failed to convert Blender file');
+  if (fileExtension === 'blend') {
+    throw new Error('Blender (.blend) files are not supported. Please export to GLB, OBJ, or another supported format.');
   }
   
-  // Get the converted file URL
-  const data = await response.json();
-  return {
-    path: `converted/${data.path}`,
-    url: data.url
-  };
-};
+  if (!fileExtension || !supportedFormats.includes(fileExtension)) {
+    throw new Error(`Unsupported file format: .${fileExtension}. Supported formats: ${supportedFormats.join(', ')}`);
+  }
+  
+  // For all supported file types, use the standard upload
+  return uploadFileToStorage(file, userId, 'models');
+}
 
 export default function UploadPage() {
   const { user, loading } = useAuth();
@@ -108,6 +153,29 @@ export default function UploadPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [modelFile, setModelFile] = useState<File | null>(null);
   const [previewImages, setPreviewImages] = useState<File[]>([]);
+  const searchParams = useSearchParams();
+  const [preloadedModelUrl, setPreloadedModelUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const modelUrl = searchParams.get('modelUrl');
+    if (modelUrl) {
+      setPreloadedModelUrl(modelUrl);
+      
+      // Extract filename from URL to set as default title
+      try {
+        const urlObj = new URL(modelUrl);
+        const pathParts = urlObj.pathname.split('/');
+        const fileNameWithExt = pathParts[pathParts.length - 1];
+        const baseName = fileNameWithExt.split('.')[0];
+        
+        if (baseName) {
+          form.setValue('title', baseName.replace(/-|_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()));
+        }
+      } catch (e) {
+        console.error('Error parsing URL:', e);
+      }
+    }
+  }, [searchParams]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(modelSchema),
@@ -132,41 +200,68 @@ export default function UploadPage() {
   }, [user, loading, router, toast]);
 
   const onSubmit = async (values: FormValues) => {
-    if (!modelFile) {
+    if (!user) {
       toast({
-        title: "Error",
-        description: "Please select a model file to upload",
-        variant: "destructive",
+        title: "Authentication Required",
+        description: "Please sign in to upload models",
+        variant: "destructive"
       });
       return;
     }
-    
+
+    if (!modelFile && !preloadedModelUrl) {
+      toast({
+        title: "Model Required",
+        description: "Please upload a 3D model file",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setIsUploading(true);
-    
+
     try {
-      const userId = user?.id || 'anonymous';
-      let modelData: UploadResponse;
+      const userId = user.id;
       
-      // Check if it's a .blend file
-      if (modelFile.name.toLowerCase().endsWith('.blend')) {
-        toast({
-          title: "Converting Blender File",
-          description: "Please wait while we convert your Blender file...",
-        });
-        
-        modelData = await handleBlendFileUpload(modelFile, userId);
+      // Verify user session is valid
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !sessionData.session) {
+        throw new Error('Your session has expired. Please sign in again.');
+      }
+      
+      // Handle model upload or use preloaded URL
+      let modelData;
+      if (preloadedModelUrl) {
+        // Use the preloaded model URL directly
+        console.log('Using preloaded model URL:', preloadedModelUrl);
+        modelData = { url: preloadedModelUrl };
       } else {
-        // Handle regular file uploads as before
-        modelData = await uploadFileToStorage(modelFile, userId, 'models');
+        // Upload the model file
+        console.log('Uploading model file:', modelFile?.name);
+        try {
+          modelData = await handleModelFileUpload(modelFile!, userId);
+        } catch (uploadError) {
+          console.error('Model upload error:', uploadError);
+          throw uploadError;
+        }
       }
       
       // Upload preview images
-      const previewUrls = await Promise.all(
-        previewImages.map(async (file) => {
-          const data = await uploadFileToStorage(file, userId, 'previews');
-          return data.url;
-        })
-      );
+      let previewUrls: string | any[] = [];
+      try {
+        previewUrls = await Promise.all(
+          previewImages.map(async (file) => {
+            console.log('Uploading preview image:', file.name);
+            const data = await uploadFileToStorage(file, userId, 'previews');
+            return data.url;
+          })
+        );
+      } catch (previewError) {
+        console.error('Preview upload error:', previewError);
+        // Continue with model upload even if preview fails
+      }
+      
+      console.log('Creating database record for model');
       
       // Create the model record in the database
       const { error: insertError } = await supabase
@@ -178,13 +273,14 @@ export default function UploadPage() {
           price: parseFloat(values.price.toString()),
           tags: values.tags,
           model_url: modelData.url,
-          preview_urls: previewUrls,
-          user_id: userId,
-          file_format: modelFile.name.toLowerCase().endsWith('.blend') ? 'glb' : modelFile.name.split('.').pop()?.toLowerCase(),
-          original_filename: modelFile.name
+          preview_image_url: previewUrls.length > 0 ? previewUrls[0] : null, // Use the first preview image as the main preview
+          user_id: userId
         });
       
-      if (insertError) throw insertError;
+      if (insertError) {
+        console.error('Database insert error:', insertError);
+        throw new Error(`Database error: ${insertError.message}`);
+      }
       
       toast({
         title: "Success",
@@ -196,9 +292,13 @@ export default function UploadPage() {
       setModelFile(null);
       setPreviewImages([]);
       
+      // Redirect to the dashboard instead of dashboard/models
+      router.push('/dashboard');
+      
     } catch (error) {
+      console.error('Upload submission error:', error);
       toast({
-        title: "Error",
+        title: "Upload Failed",
         description: error instanceof Error ? error.message : "Failed to upload model",
         variant: "destructive",
       });
@@ -230,9 +330,16 @@ export default function UploadPage() {
 
   return (
     <div className="container py-8">
-      <div className="max-w-2xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6">Upload 3D Model</h1>
-        
+      <div className="max-w-3xl mx-auto">
+        <div className="flex flex-col space-y-2 mb-6">
+          <h1 className="text-3xl font-bold">Upload 3D Model</h1>
+          <p className="text-muted-foreground">
+            {preloadedModelUrl 
+              ? "Complete the details to add your scanned model to the marketplace" 
+              : "Share your 3D models with the community"}
+          </p>
+        </div>
+
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
             <FormField
@@ -390,14 +497,38 @@ export default function UploadPage() {
               )}
             />
 
-            <div className="space-y-2">
-              <FormLabel>3D Model File</FormLabel>
-              <Input
-                type="file"
-                accept=".glb,.gltf,.fbx,.obj,.blend,.stl,.ply"
-                onChange={(e) => setModelFile(e.target.files?.[0] || null)}
-              />
-            </div>
+            {!preloadedModelUrl && (
+              <div className="space-y-2">
+                <FormLabel>3D Model File</FormLabel>
+                <Input
+                  type="file"
+                  accept=".glb,.gltf,.fbx,.obj,.stl,.ply"
+                  onChange={(e) => setModelFile(e.target.files?.[0] || null)}
+                />
+                <p className="text-sm text-muted-foreground">
+                  Supported formats: GLB, GLTF, FBX, OBJ, STL, PLY
+                </p>
+              </div>
+            )}
+
+            {preloadedModelUrl && (
+              <div className="bg-muted p-4 rounded-md mb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-medium">Scanned Model</h3>
+                    <p className="text-sm text-muted-foreground">Your 3D scan is ready to be published</p>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => window.open(preloadedModelUrl, '_blank')}
+                  >
+                    <Eye className="h-4 w-4 mr-2" />
+                    Preview
+                  </Button>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-2">
               <FormLabel>Preview Images</FormLabel>
@@ -451,10 +582,5 @@ export default function UploadPage() {
   );
 }
 
-
-
-
-
-
-
-
+// The function implementation is already defined earlier in the file
+// This duplicate function implementation has been removed

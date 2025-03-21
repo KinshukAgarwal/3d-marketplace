@@ -141,7 +141,7 @@ async function startPipelineProcessing(jobId: string, videoPath: string, userId:
             })
             .eq('id', jobId)
             .then(() => {})
-            .catch((err: Error) => console.error('Failed to update job progress:', err));
+            .catch((err: any) => console.error('Failed to update job progress:', err));
         }
       });
     }
@@ -225,34 +225,58 @@ async function uploadModelToStorage(modelPath: string, userId: string, jobId: st
   const pointCloudsDir = path.join(modelPath, 'point_clouds');
   const modelFilePath = path.join(pointCloudsDir, 'final_mesh.ply');
   
+  console.log(`Checking for model file at: ${modelFilePath}`);
+  
   // Check if the file exists, otherwise try simplified_mesh.ply
   let actualModelPath = modelFilePath;
   if (!fs.existsSync(actualModelPath)) {
+    console.log(`final_mesh.ply not found, trying simplified_mesh.ply`);
     actualModelPath = path.join(pointCloudsDir, 'simplified_mesh.ply');
     if (!fs.existsSync(actualModelPath)) {
+      console.log(`No model file found in directory: ${pointCloudsDir}`);
+      // List files in directory for debugging
+      if (fs.existsSync(pointCloudsDir)) {
+        const files = fs.readdirSync(pointCloudsDir);
+        console.log(`Files in directory: ${files.join(', ')}`);
+      } else {
+        console.log(`Directory does not exist: ${pointCloudsDir}`);
+      }
       throw new Error('No model file found');
     }
   }
   
+  console.log(`Found model file at: ${actualModelPath}`);
+  
   // Read the model file
   const modelBuffer = fs.readFileSync(actualModelPath);
+  console.log(`Read model file, size: ${modelBuffer.length} bytes`);
   
   // Upload to Supabase storage
+  const fileName = `${userId}/${jobId}/model.ply`;
+  console.log(`Uploading to storage: ${fileName}`);
+  
   const { data, error } = await supabaseAdmin
     .storage
     .from('models')
-    .upload(`${userId}/${jobId}/model.ply`, modelBuffer, {
+    .upload(fileName, modelBuffer, {
       contentType: 'application/octet-stream',
       cacheControl: '3600'
     });
   
-  if (error) throw error;
+  if (error) {
+    console.error('Storage upload error:', error);
+    throw error;
+  }
+  
+  console.log('Upload successful, getting public URL');
   
   // Get the public URL
   const { data: urlData } = supabaseAdmin
     .storage
     .from('models')
-    .getPublicUrl(`${userId}/${jobId}/model.ply`);
+    .getPublicUrl(fileName);
+  
+  console.log(`Model public URL: ${urlData.publicUrl}`);
   
   return urlData.publicUrl;
 }
@@ -277,6 +301,8 @@ async function simulateProcessing(jobId: string, userId: string) {
     })
     .eq('id', jobId);
 }
+
+
 
 
 

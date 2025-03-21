@@ -8,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
+import { Eye } from "lucide-react";
 
 interface JobStatus {
   id: string;
@@ -149,14 +150,19 @@ export default function ProcessingPage() {
           </Button>
           
           {jobStatus.status === 'completed' && jobStatus.modelUrl && (
-            <Button onClick={() => jobStatus.modelUrl && window.open(jobStatus.modelUrl, '_blank')}>
-              View Model
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => router.push(`/model-viewer?url=${encodeURIComponent(jobStatus.modelUrl || '')}`)}>
+                <Eye className="h-4 w-4 mr-2" />
+                View Model
+              </Button>
+            </div>
           )}
         </CardFooter>
       </Card>
     </div>
   );
 }
+
+
 
 

@@ -1,8 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Download, Trash2, Eye } from "lucide-react";
+import { Download, Trash2, Eye, Upload } from "lucide-react";
 import { ProcessingStatus } from "./processing-status";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 interface Task {
   id: string;
@@ -42,7 +43,7 @@ export function TaskList({ tasks, onDelete }: TaskListProps) {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => task.modelUrl && window.open(task.modelUrl, '_blank')}
+                    onClick={() => task.modelUrl && router.push(`/model-viewer?url=${encodeURIComponent(task.modelUrl)}`)}
                   >
                     <Eye className="h-4 w-4 mr-1" />
                     View

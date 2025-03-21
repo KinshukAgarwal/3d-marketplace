@@ -210,7 +210,7 @@ export default function Home() {
               <AccordionItem value="item-1">
                 <AccordionTrigger>What file formats are supported?</AccordionTrigger>
                 <AccordionContent>
-                  We support all major 3D file formats including .fbx, .obj, .gltf, .blend, and more. 
+                  We support all major 3D file formats including .fbx, .obj, .gltf, .glb, .stl, and .ply. 
                   All models are verified for quality and compatibility before being listed.
                 </AccordionContent>
               </AccordionItem>

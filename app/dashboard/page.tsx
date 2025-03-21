@@ -69,7 +69,7 @@ const generateMonthlyEarningsData = (models: Model[]): ChartData[] => {
 
   // Calculate earnings for each model's downloads
   models.forEach(model => {
-    const date = new Date(model.created_at);
+    const date = new Date(model.created_at || new Date());
     const monthKey = date.toLocaleString('default', { month: 'short', year: '2-digit' });
     
     if (monthlyEarnings.has(monthKey)) {
@@ -102,7 +102,7 @@ const generateDownloadsData = (models: Model[]) => {
 
   // Calculate downloads for each model
   models.forEach(model => {
-    const modelDate = new Date(model.created_at);
+    const modelDate = new Date(model.created_at || new Date());
     const monthKey = modelDate.toLocaleString('default', { month: 'short', year: '2-digit' });
     
     if (monthlyDownloads.has(monthKey)) {
@@ -152,8 +152,7 @@ const fetchUserModelsWithRetry = async (userId: string, retryCount = 3): Promise
           preview_image_url,
           created_at,
           category,
-          downloads,
-          likes (count)
+          downloads
         `)
         .eq('user_id', userId);
 
@@ -167,39 +166,33 @@ const fetchUserModelsWithRetry = async (userId: string, retryCount = 3): Promise
         throw new Error(`Database error: ${modelsError.message}`);
       }
 
+      // Get accurate like counts for each model
+      const likesCountPromises = modelsData.map(model =>
+        supabase
+          .from('likes')
+          .select('id', { count: 'exact' })
+          .eq('model_id', model.id)
+      );
+
+      const likeCounts = await Promise.all(likesCountPromises);
+
       // Combine all data
-      return modelsData.map(model => ({
+      return modelsData.map((model, index) => ({
         ...model,
         downloads: model.downloads || 0,
-        likes: Array.isArray(model.likes) ? model.likes.length : 0,
+        likes: likeCounts[index].count || 0,
         price: model.price || 0,
         category: model.category || '',
         user_id: userId
       })) as Model[];  // Explicitly cast to Model[]
-
     } catch (error) {
-      const attemptLog = {
-        attempt: i + 1,
-        totalAttempts: retryCount,
-        errorType: error instanceof Error ? 'Error' : typeof error,
-        errorMessage: error instanceof Error ? error.message : String(error),
-        timestamp: new Date().toISOString()
-      };
-
-      console.error('Fetch attempt failed:', attemptLog);
-
-      if (i === retryCount - 1) {
-        const finalError = new Error(
-          `Failed after ${retryCount} attempts: ${attemptLog.errorMessage}`
-        );
-        throw finalError;
-      }
-
-      // Wait before retry
-      await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+      console.error(`Attempt ${i + 1} failed:`, error);
+      if (i === retryCount - 1) throw error;
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
-  throw new Error('Failed to fetch models after exhausting all retry attempts');
+  throw new Error('Failed to fetch models after multiple attempts');
 };
 
 const deleteModelFiles = async (
@@ -701,7 +694,7 @@ export default function DashboardPage() {
                     <CardHeader className="p-4">
                       <CardTitle className="text-xl">{model.title}</CardTitle>
                       <div className="flex items-center text-sm text-muted-foreground">
-                        Uploaded on {new Date(model.created_at).toLocaleDateString()}
+                        Uploaded on {model.created_at ? new Date(model.created_at).toLocaleDateString() : 'Unknown date'}
                       </div>
                     </CardHeader>
                     <CardContent className="p-4 pt-0">
@@ -778,7 +771,7 @@ export default function DashboardPage() {
               
               // Calculate this month's earnings
               const thisMonthEarnings = userModels.reduce((sum, model) => {
-                const modelDate = new Date(model.created_at);
+                const modelDate = new Date(model.created_at || Date.now());
                 if (modelDate >= firstDayOfMonth) {
                   return sum + (model.price * (model.downloads || 0));
                 }
@@ -788,7 +781,7 @@ export default function DashboardPage() {
               // Calculate pending payout (earnings from the last 30 days)
               const thirtyDaysAgo = new Date(now.setDate(now.getDate() - 30));
               const pendingPayout = userModels.reduce((sum, model) => {
-                const modelDate = new Date(model.created_at);
+                const modelDate = new Date(model.created_at || Date.now());
                 if (modelDate >= thirtyDaysAgo) {
                   return sum + (model.price * (model.downloads || 0));
                 }
