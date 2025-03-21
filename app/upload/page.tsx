@@ -344,10 +344,26 @@ export default function UploadPage() {
                   <FormControl>
                     <Input 
                       {...field} 
-                      value={field.value.join(', ')}
+                      value={Array.isArray(field.value) ? field.value.join(', ') : field.value}
                       onChange={(e) => {
-                        const value = e.target.value;
-                        field.onChange(value.split(',').map(tag => tag.trim()).filter(Boolean));
+                        const inputValue = e.target.value;
+                        
+                        // Store the raw input string with commas
+                        // We'll only convert to array on blur or when form is submitted
+                        field.onChange(inputValue);
+                      }}
+                      onBlur={(e) => {
+                        const inputValue = e.target.value;
+                        
+                        // When field loses focus, convert comma-separated string to array
+                        if (typeof inputValue === 'string') {
+                          const tags = inputValue
+                            .split(',')
+                            .map(tag => tag.trim())
+                            .filter(Boolean);
+                          
+                          field.onChange(tags);
+                        }
                       }}
                     />
                   </FormControl>

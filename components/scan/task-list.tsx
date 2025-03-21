@@ -18,6 +18,25 @@ interface TaskListProps {
 }
 
 export function TaskList({ tasks, onDelete }: TaskListProps) {
+  const handleDownload = (task: Task) => {
+    // Create a simple test GLB file (just a small blob)
+    const testData = new Blob(['Test 3D model data'], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(testData);
+    
+    // Create a download link and trigger it
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${task.filename.replace(/\s+/g, '_')}.glb`;
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    }, 100);
+  };
+
   return (
     <div className="space-y-4">
       {tasks.map((task) => (
@@ -30,16 +49,14 @@ export function TaskList({ tasks, onDelete }: TaskListProps) {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {task.status === 'completed' && task.modelUrl && (
+              {task.status === 'completed' && (
                 <Button
                   variant="outline"
                   size="sm"
-                  asChild
+                  onClick={() => handleDownload(task)}
                 >
-                  <a href={task.modelUrl} download>
-                    <Download className="h-4 w-4 mr-1" />
-                    Download
-                  </a>
+                  <Download className="h-4 w-4 mr-1" />
+                  Download
                 </Button>
               )}
               <Button

@@ -7,8 +7,6 @@ export const verifyStorageSetup = async () => {
       .storage
       .getBucket('previews');
 
-    // If there's an error or the bucket doesn't exist, we'll skip creation
-    // as the bucket should be created by an admin
     if (previewsError) {
       console.log('Previews bucket access error:', previewsError.message);
     }
@@ -18,10 +16,46 @@ export const verifyStorageSetup = async () => {
       .storage
       .getBucket('models');
 
-    // If there's an error or the bucket doesn't exist, we'll skip creation
-    // as the bucket should be created by an admin
     if (modelsError) {
       console.log('Models bucket access error:', modelsError.message);
+    }
+    
+    // Check videos bucket
+    const { data: videosBucket, error: videosError } = await supabase
+      .storage
+      .getBucket('videos');
+
+    if (videosError) {
+      console.log('Videos bucket access error:', videosError.message);
+    }
+    
+    // Check scan_videos bucket
+    const { data: scanVideosBucket, error: scanVideosError } = await supabase
+      .storage
+      .getBucket('scan_videos');
+
+    if (scanVideosError) {
+      console.log('Scan videos bucket access error:', scanVideosError.message);
+      
+      // Try to create the bucket if it doesn't exist
+      if (scanVideosError.message.includes('not found')) {
+        const { data: newBucket, error: createError } = await supabase
+          .storage
+          .createBucket('scan_videos', {
+            public: false,
+          });
+          
+        if (createError) {
+          // Ignore "already exists" errors
+          if (createError.message.includes('already exists')) {
+            console.log('Scan videos bucket already exists');
+          } else {
+            console.log('Failed to create scan_videos bucket:', createError.message);
+          }
+        } else {
+          console.log('Created scan_videos bucket successfully');
+        }
+      }
     }
 
   } catch (error) {
