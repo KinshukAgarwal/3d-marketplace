@@ -19,43 +19,101 @@ interface VideoUploaderProps {
 const SUPPORTED_FORMATS = ['.mp4', '.mov', '.avi'];
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
-export default function VideoUploader({ 
-  onFileSelect, 
-  isUploading, 
-  uploadProgress 
-}: VideoUploaderProps) {
+export default function VideoUploader({ onFileSelect, isUploading, uploadProgress }: VideoUploaderProps) {
+  const { toast } = useToast();
+  const [isDragging, setIsDragging] = useState(false);
+
+  const validateFile = (file: File): boolean => {
+    // Check file size
+    if (file.size > MAX_FILE_SIZE) {
+      toast({
+        title: "File too large",
+        description: `Maximum file size is ${MAX_FILE_SIZE / (1024 * 1024)}MB`,
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    // Check file format
+    const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+    if (!SUPPORTED_FORMATS.includes(fileExtension)) {
+      toast({
+        title: "Unsupported format",
+        description: `Supported formats: ${SUPPORTED_FORMATS.join(', ')}`,
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    return true;
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (file && validateFile(file)) {
+      console.log('File selected:', file.name, 'Size:', file.size);
       onFileSelect(file);
     }
   };
 
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    const file = e.dataTransfer.files?.[0];
+    if (file && validateFile(file)) {
+      console.log('File dropped:', file.name, 'Size:', file.size);
+      onFileSelect(file);
+    }
+  }, [onFileSelect, toast]);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
   return (
-    <div className="flex flex-col items-center w-full">
-      <label 
-        className="w-full h-64 flex flex-col items-center justify-center border-2 border-dashed rounded-lg cursor-pointer relative overflow-hidden group"
-      >
-        <div className="absolute inset-0 border-2 border-transparent rounded-lg transition-all duration-300 group-hover:border-primary/50 group-hover:shadow-[0_0_10px_rgba(var(--primary-rgb),0.3)]"></div>
-        <div className="flex flex-col items-center justify-center pt-5 pb-6 z-10">
-          <UploadCloud className="w-12 h-12 mb-3 text-muted-foreground" />
-          <p className="mb-2 text-sm text-muted-foreground">
-            <span className="font-semibold">Click to upload</span> or drag and drop
+    <div
+      className={`border-2 border-dashed rounded-lg p-10 text-center ${
+        isDragging ? 'border-primary bg-primary/10' : 'border-gray-300'
+      }`}
+      onDrop={handleDrop}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+    >
+      <div className="flex flex-col items-center justify-center space-y-4">
+        <UploadCloud className="h-12 w-12 text-gray-400" />
+        <div className="space-y-2">
+          <h3 className="text-lg font-medium">Upload a video</h3>
+          <p className="text-sm text-muted-foreground">
+            Drag and drop a video file, or click to browse
           </p>
           <p className="text-xs text-muted-foreground">
-            MP4, MOV, or AVI (max. 100MB)
+            Supported formats: {SUPPORTED_FORMATS.join(', ')} (Max {MAX_FILE_SIZE / (1024 * 1024)}MB)
           </p>
         </div>
-        <input 
-          id="dropzone-file" 
-          type="file" 
-          className="hidden" 
-          accept="video/mp4,video/quicktime,video/x-msvideo" 
-          onChange={handleFileChange}
-          disabled={isUploading}
-        />
-      </label>
-      <UploadProgress progress={uploadProgress} isUploading={isUploading} />
+        <div>
+          <input
+            type="file"
+            id="video-upload"
+            className="hidden"
+            accept={SUPPORTED_FORMATS.join(',')}
+            onChange={handleFileChange}
+            disabled={isUploading}
+          />
+          <Button
+            variant="outline"
+            onClick={() => document.getElementById('video-upload')?.click()}
+            disabled={isUploading}
+          >
+            Select Video
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -63,44 +63,43 @@ export default function ScanPage() {
     setupDb();
   }, [toast]);
 
-  useEffect(() => {
-    // Fetch user's jobs
-    const fetchJobs = async () => {
-      if (!user) return;
-      
-      setIsLoadingJobs(true);
-      
-      try {
-        const { data, error } = await supabase
-          .from('video_processing_jobs')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
-        
-        if (error) throw error;
-        
-        const formattedJobs = data.map(job => ({
-          id: job.id,
-          status: job.status,
-          filename: job.filename || 'Unnamed scan',
-          progress: job.metadata?.progress || 0,
-          modelUrl: job.model_url,
-          error: job.error
-        }));
-        
-        setJobs(formattedJobs);
-      } catch (error) {
-        console.error('Error fetching jobs:', error);
-        toast({
-          title: "Error",
-          description: "Failed to load your previous scans",
-          variant: "destructive",
-        });
-      } finally {
-        setIsLoadingJobs(false);
-      }
-    };
+  const fetchJobs = async () => {
+    if (!user) return;
     
+    setIsLoadingJobs(true);
+    
+    try {
+      const { data, error } = await supabase
+        .from('video_processing_jobs')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      
+      const formattedJobs = data.map(job => ({
+        id: job.id,
+        status: job.status,
+        filename: job.filename || 'Unnamed scan',
+        progress: job.metadata?.progress || 0,
+        modelUrl: job.model_url,
+        error: job.metadata?.error || job.error
+      }));
+      
+      setJobs(formattedJobs);
+    } catch (error) {
+      console.error('Error fetching jobs:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load your previous scans",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingJobs(false);
+    }
+  };
+
+  useEffect(() => {
     fetchJobs();
   }, [user, toast]);
 
@@ -131,44 +130,52 @@ export default function ScanPage() {
         });
       }, 200);
       
-      // Send to our API endpoint
-      const response = await fetch('/api/process-scan', {
-        method: 'POST',
-        body: formData,
-      });
+      console.log('Uploading video:', selectedFile.name, 'Size:', selectedFile.size);
       
-      clearInterval(progressInterval);
-      
-      const responseData = await response.json();
-      
-      if (!response.ok) {
-        // Check for specific database errors
-        if (responseData.error && responseData.error.includes('does not exist')) {
-          throw new Error('Database setup required. Please contact an administrator.');
+      try {
+        // Send to our API endpoint
+        const response = await fetch('/api/process-scan', {
+          method: 'POST',
+          body: formData,
+        });
+        
+        clearInterval(progressInterval);
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('Server response error:', response.status, errorText);
+          throw new Error(`Server error: ${response.status} - ${errorText || 'No error details'}`);
         }
-        throw new Error(responseData.error || 'Failed to upload video');
+        
+        const responseData = await response.json();
+        
+        setUploadProgress(100);
+        const { jobId } = responseData;
+        setJobId(jobId);
+        
+        // Switch to processing state
+        setIsUploading(false);
+        setIsProcessing(true);
+        
+        toast({
+          title: "Upload Successful",
+          description: "Video processing has begun",
+        });
+        
+        // Refresh jobs list
+        fetchJobs();
+        
+        // Redirect to processing page after a short delay
+        setTimeout(() => {
+          router.push(`/dashboard/processing/${jobId}`);
+        }, 2000);
+      } catch (fetchError: any) {
+        console.error('Fetch error:', fetchError);
+        throw new Error(`Network error: ${fetchError.message || 'Failed to connect to server'}`);
       }
-      
-      setUploadProgress(100);
-      const { jobId } = responseData;
-      setJobId(jobId);
-      
-      // Switch to processing state
-      setIsUploading(false);
-      setIsProcessing(true);
-      
-      toast({
-        title: "Upload Successful",
-        description: "Video processing has begun",
-      });
-      
-      // Redirect to processing page after a short delay
-      setTimeout(() => {
-        router.push(`/dashboard/processing/${jobId}`);
-      }, 2000);
-      
     } catch (error: any) {
       setIsUploading(false);
+      setUploadProgress(0);
       console.error('Upload error:', error);
       toast({
         title: "Upload Failed",
@@ -254,15 +261,7 @@ export default function ScanPage() {
             You haven't created any 3D scans yet
           </div>
         ) : (
-          <TaskList 
-            tasks={jobs.map(job => ({
-              ...job,
-              status: (["uploading", "processing", "completed", "failed"].includes(job.status) 
-                ? job.status 
-                : "processing") as "uploading" | "processing" | "completed" | "failed"
-            }))} 
-            onDelete={handleDeleteJob} 
-          />
+          <TaskList tasks={jobs} onDelete={handleDeleteJob} />
         )}
       </div>
     </div>

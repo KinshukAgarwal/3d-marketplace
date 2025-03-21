@@ -1,42 +1,30 @@
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Trash2, Download } from "lucide-react";
+import { Download, Trash2, Eye } from "lucide-react";
 import { ProcessingStatus } from "./processing-status";
+import { useRouter } from "next/navigation";
 
 interface Task {
   id: string;
+  status: string;
   filename: string;
-  status: 'uploading' | 'processing' | 'completed' | 'failed';
   progress: number;
-  error?: string;
-  modelUrl?: string;
+  modelUrl: string | null;
+  error: string | null;
 }
 
 interface TaskListProps {
   tasks: Task[];
-  onDelete: (taskId: string) => void;
+  onDelete: (id: string) => void;
 }
 
 export function TaskList({ tasks, onDelete }: TaskListProps) {
-  const handleDownload = (task: Task) => {
-    // Create a simple test GLB file (just a small blob)
-    const testData = new Blob(['Test 3D model data'], { type: 'application/octet-stream' });
-    const url = URL.createObjectURL(testData);
-    
-    // Create a download link and trigger it
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${task.filename.replace(/\s+/g, '_')}.glb`;
-    document.body.appendChild(a);
-    a.click();
-    
-    // Clean up
-    setTimeout(() => {
-      URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    }, 100);
+  const router = useRouter();
+  
+  const handleViewProcessing = (jobId: string) => {
+    router.push(`/dashboard/processing/${jobId}`);
   };
-
+  
   return (
     <div className="space-y-4">
       {tasks.map((task) => (
@@ -49,14 +37,36 @@ export function TaskList({ tasks, onDelete }: TaskListProps) {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {task.status === 'completed' && (
+              {task.status === 'completed' && task.modelUrl && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => task.modelUrl && window.open(task.modelUrl, '_blank')}
+                  >
+                    <Eye className="h-4 w-4 mr-1" />
+                    View
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    asChild
+                  >
+                    <a href={task.modelUrl} download>
+                      <Download className="h-4 w-4 mr-1" />
+                      Download
+                    </a>
+                  </Button>
+                </>
+              )}
+              {(task.status === 'processing' || task.status === 'uploading') && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => handleDownload(task)}
+                  onClick={() => handleViewProcessing(task.id)}
                 >
-                  <Download className="h-4 w-4 mr-1" />
-                  Download
+                  <Eye className="h-4 w-4 mr-1" />
+                  View Progress
                 </Button>
               )}
               <Button
@@ -70,10 +80,12 @@ export function TaskList({ tasks, onDelete }: TaskListProps) {
           </div>
 
           {(task.status === 'uploading' || task.status === 'processing') && (
-            <ProcessingStatus
-              status={task.status}
-              progress={task.progress}
-            />
+            <div className="mt-2">
+              <ProcessingStatus
+                status={task.status}
+                progress={task.progress}
+              />
+            </div>
           )}
 
           {task.status === 'failed' && task.error && (

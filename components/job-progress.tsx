@@ -14,23 +14,6 @@ export function JobProgress({ jobState }: JobProgressProps) {
 
   const { status, progress, currentStage, modelUrl, error } = jobState;
 
-  // Progress stages aligned with pipeline/main.py
-  const stages = [
-    { name: "Checking video quality", progress: 5 },
-    { name: "Processing video frames", progress: 10 },
-    { name: "Generating initial mesh", progress: 30 },
-    { name: "Optimizing mesh", progress: 60 },
-    { name: "Checking mesh quality", progress: 80 },
-    { name: "Converting to final format", progress: 90 },
-    { name: "Complete", progress: 100 }
-  ];
-
-  const getCurrentStage = () => {
-    if (status === 'completed') return "Complete";
-    if (status === 'failed') return "Failed";
-    return currentStage || stages.find(stage => progress <= stage.progress)?.name || "Processing...";
-  };
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -38,7 +21,11 @@ export function JobProgress({ jobState }: JobProgressProps) {
           {status === 'processing' && <Loader2 className="h-4 w-4 animate-spin" />}
           {status === 'completed' && <CheckCircle2 className="h-4 w-4 text-green-500" />}
           {status === 'failed' && <AlertCircle className="h-4 w-4 text-red-500" />}
-          <span className="font-medium">{getCurrentStage()}</span>
+          <span className="font-medium">
+            {status === 'completed' ? "Complete" : 
+             status === 'failed' ? "Failed" : 
+             currentStage || "Processing..."}
+          </span>
         </div>
         <span className="text-sm text-muted-foreground">{progress}%</span>
       </div>

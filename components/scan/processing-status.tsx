@@ -1,8 +1,9 @@
 import { Progress } from "@/components/ui/progress";
+import { Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface ProcessingStatusProps {
-  status: 'uploading' | 'processing';
+  status: 'uploading' | 'processing' | 'transcoding' | 'completed';
   progress: number;
   error?: string;
 }

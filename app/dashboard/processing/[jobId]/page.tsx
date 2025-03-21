@@ -90,54 +90,9 @@ export default function ProcessingPage() {
       )
       .subscribe();
 
-    // For demo purposes, simulate processing progress
-    let progress = 0;
-    const interval = setInterval(async () => {
-      progress += 5;
-      if (progress <= 100) {
-        try {
-          // Update the job in Supabase to trigger the subscription
-          const { error } = await supabase
-            .from('video_processing_jobs')
-            .update({ 
-              metadata: { 
-                progress, 
-                current_stage: progress < 30 ? 'analyzing video' : 
-                              progress < 60 ? 'generating point cloud' : 
-                              progress < 90 ? 'creating mesh' : 'finalizing model' 
-              }
-            })
-            .eq('id', jobId)
-            .eq('user_id', user.id); // Add this line to match RLS policy
-          
-          if (error) console.error('Update error:', error);
-        } catch (err) {
-          console.error('Simulation update error:', err);
-        }
-      } else {
-        clearInterval(interval);
-        // Mark as complete
-        try {
-          const { error } = await supabase
-            .from('video_processing_jobs')
-            .update({ 
-              status: 'completed',
-              model_url: 'https://example.com/sample-model.glb', // Placeholder URL
-              metadata: { progress: 100, current_stage: 'completed' }
-            })
-            .eq('id', jobId)
-            .eq('user_id', user.id); // Add this line to match RLS policy
-          
-          if (error) console.error('Completion update error:', error);
-        } catch (err) {
-          console.error('Completion update error:', err);
-        }
-      }
-    }, 1000);
-
+    // Remove the simulation code
     return () => {
       subscription.unsubscribe();
-      clearInterval(interval);
     };
   }, [jobId, router, toast, user]);
 
@@ -203,4 +158,5 @@ export default function ProcessingPage() {
     </div>
   );
 }
+
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 
@@ -17,6 +17,7 @@ export function useJobStatus(jobId: string) {
   const [jobState, setJobState] = useState<JobState | null>(null);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+  const previousStatusRef = useRef<JobStatus | null>(null);
 
   useEffect(() => {
     let subscription: any;
@@ -64,12 +65,14 @@ export function useJobStatus(jobId: string) {
               });
 
               // Show toast notifications for important status changes
-              if (job.status === 'completed') {
+              if (job.status === 'completed' && previousStatusRef.current !== 'completed') {
+                previousStatusRef.current = 'completed';
                 toast({
                   title: "Processing Complete",
                   description: "Your 3D model is ready!",
                 });
-              } else if (job.status === 'failed') {
+              } else if (job.status === 'failed' && previousStatusRef.current !== 'failed') {
+                previousStatusRef.current = 'failed';
                 toast({
                   title: "Processing Failed",
                   description: job.error || "An error occurred during processing",

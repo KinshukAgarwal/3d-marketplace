@@ -1,12 +1,28 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
+import { exec } from 'child_process';
+import { writeFile } from 'fs/promises';
+import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import os from 'os';
+import fs from 'fs';
+
+// Create admin client for database operations
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+);
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('Received scan request');
     const formData = await request.formData();
     const videoFile = formData.get('video') as File;
     const userId = formData.get('userId') as string;
+    
+    console.log('Video file received:', videoFile?.name, 'Size:', videoFile?.size);
+    console.log('User ID:', userId);
     
     if (!videoFile || !userId) {
       return NextResponse.json(
@@ -15,208 +31,253 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('Processing request for user:', userId, 'with file:', videoFile.name);
-
-    // 1. Create processing job with more detailed error handling
+    // Create a unique job ID
+    const jobId = uuidv4();
+    
+    // Create a temporary directory for processing
+    const tempDir = path.join(os.tmpdir(), jobId);
+    const videoPath = path.join(tempDir, videoFile.name);
+    
     try {
-      // First, check if we can connect to the database
-      const { data: testData, error: testError } = await supabase
-        .from('video_processing_jobs')
-        .select('id')
-        .limit(1);
-      
-      if (testError) {
-        console.error('Database connection test failed:', testError);
-        return NextResponse.json(
-          { error: `Database connection error: ${testError.message}` },
-          { status: 500 }
-        );
-      }
-      
-      // For server-side operations, we need to use service role to bypass RLS
-      // Or modify the RLS policy to allow the service role to insert on behalf of users
-      
-      // Option 1: Use service role if available
-      let supabaseAdmin = supabase;
-      if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-        const { data } = await supabase.auth.setSession({
-          access_token: process.env.SUPABASE_SERVICE_ROLE_KEY,
-          refresh_token: ''
-        });
-        supabaseAdmin = supabase;
-      }
-      
-      // Now try to insert the job
+      // Create job record in database
       const { data: job, error: jobError } = await supabaseAdmin
         .from('video_processing_jobs')
         .insert({
+          id: jobId,
           user_id: userId,
-          status: 'uploading',
+          status: 'pending',
           filename: videoFile.name,
-          metadata: { progress: 0 }
+          metadata: { progress: 0, current_stage: 'uploading' }
         })
         .select()
         .single();
-
+      
       if (jobError) {
-        console.error('Job creation error details:', jobError);
-        
-        // Check if it's a permissions issue
-        if (jobError.message.includes('permission') || jobError.code === '42501' || 
-            jobError.message.includes('violates row-level security')) {
-          return NextResponse.json(
-            { error: `Permission denied: ${jobError.message}` },
-            { status: 403 }
-          );
-        }
-        
-        // Check if it's a schema issue
-        if (jobError.message.includes('column') || jobError.code === '42703') {
-          return NextResponse.json(
-            { error: `Schema error: ${jobError.message}` },
-            { status: 500 }
-          );
-        }
-        
-        return NextResponse.json(
-          { error: `Failed to create processing job: ${jobError.message}` },
-          { status: 500 }
-        );
-      }
-
-      if (!job) {
-        console.error('Job creation failed: No job data returned');
-        return NextResponse.json(
-          { error: 'Failed to create processing job: No job data returned' },
-          { status: 500 }
-        );
+        console.error('Database error creating job:', jobError);
+        throw jobError;
       }
       
-      console.log('Job created successfully:', job.id);
+      // Create directory if it doesn't exist
+      await fs.promises.mkdir(tempDir, { recursive: true });
       
-      // Create a supabase admin client with service role key
-      // Use the existing supabaseAdmin variable
-      if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-        supabaseAdmin = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-          process.env.SUPABASE_SERVICE_ROLE_KEY,
-          {
-            auth: {
-              autoRefreshToken: false,
-              persistSession: false
-            }
-          }
-        );
-      }
-
-      // Check if bucket exists and create if needed
-      try {
-        // Check if bucket exists
-        const { data: buckets, error: bucketsError } = await supabase
-          .storage
-          .listBuckets();
-        
-        const bucketExists = buckets?.some(bucket => bucket.name === 'scan_videos');
-        
-        if (!bucketExists) {
-          // Try to create the bucket using admin privileges
-          const { data: newBucket, error: createError } = await supabaseAdmin
-            .storage
-            .createBucket('scan_videos', {
-              public: false, // Set to true if you want files to be publicly accessible
-            });
-            
-          if (createError) {
-            // If the error is just that the bucket already exists, we can ignore it
-            if (createError.message.includes('already exists')) {
-              console.log('Bucket already exists, continuing with upload');
-            } else {
-              console.error('Bucket creation error:', createError);
-              return NextResponse.json(
-                { error: `Failed to create storage bucket: ${createError.message}` },
-                { status: 500 }
-              );
-            }
-          } else {
-            console.log('Created new bucket:', newBucket);
-          }
-        }
-        
-        // Now upload the file using the admin client
-        const fileName = `${userId}/${Date.now()}-${videoFile.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-
-        const { error: uploadError } = await supabaseAdmin.storage
-          .from('scan_videos')
-          .upload(fileName, videoFile);
-          
-        if (uploadError) {
-          console.error('Video upload error:', uploadError);
-          
-          // Update job status to failed
-          await supabaseAdmin
-            .from('video_processing_jobs')
-            .update({ 
-              status: 'failed',
-              error: `Failed to upload video: ${uploadError.message}`
-            })
-            .eq('id', job.id);
-            
-          return NextResponse.json(
-            { error: `Failed to upload video: ${uploadError.message}` },
-            { status: 500 }
-          );
-        }
-        
-        // Update job status to processing using admin client
-        await supabaseAdmin
-          .from('video_processing_jobs')
-          .update({ 
-            status: 'processing',
-            metadata: { progress: 0, current_stage: 'starting' }
-          })
-          .eq('id', job.id);
-
-        // Trigger the background processing simulation
-        try {
-          await fetch(`${process.env.NEXT_PUBLIC_APP_URL || ''}/api/simulate-processing`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ jobId: job.id }),
-          });
-        } catch (error) {
-          console.error('Failed to start background processing:', error);
-          // Continue anyway, as this is just a simulation
-        }
-
-        // Return job ID for client to track progress
-        return NextResponse.json({ 
-          success: true, 
-          jobId: job.id 
-        });
-      } catch (error: any) {
-        console.error('Storage operation error:', error);
-        return NextResponse.json(
-          { error: `Storage operation failed: ${error.message}` },
-          { status: 500 }
-        );
-      }
+      // Convert File to Buffer correctly
+      const buffer = Buffer.from(await videoFile.arrayBuffer());
+      await fs.promises.writeFile(videoPath, buffer, 'binary');
+      
+      // Update job status to processing
+      await supabaseAdmin
+        .from('video_processing_jobs')
+        .update({ 
+          status: 'processing',
+          metadata: { progress: 0, current_stage: 'starting' }
+        })
+        .eq('id', jobId);
+      
+      // Start the pipeline processing in the background
+      startPipelineProcessing(jobId, videoPath, userId);
+      
+      // Return job ID for client to track progress
+      return NextResponse.json({ 
+        success: true, 
+        jobId: jobId 
+      });
     } catch (error: any) {
-      console.error('Job creation error:', error);
+      console.error('Error setting up processing:', error);
       return NextResponse.json(
-        { error: `Failed to create processing job: ${error.message || 'Unknown error'}` },
+        { error: error.message || 'Failed to start processing' },
         { status: 500 }
       );
     }
   } catch (error: any) {
-    console.error('Processing error:', error);
+    console.error('Error processing request:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to process video' },
+      { error: error.message || 'Failed to process request' },
       { status: 500 }
     );
   }
 }
+
+async function startPipelineProcessing(jobId: string, videoPath: string, userId: string) {
+  const baseDir = path.join(os.tmpdir(), jobId);
+  
+  // Check if the pipeline module exists before executing
+  try {
+    // For development/testing, you might want to simulate the pipeline instead
+    // of actually running it if the module doesn't exist
+    const isPipelineAvailable = await fs.promises.access(
+      path.join(process.cwd(), 'pipeline', 'main.py')
+    ).then(() => true).catch(() => false);
+    
+    if (!isPipelineAvailable) {
+      console.log('Pipeline module not found, simulating processing instead');
+      simulateProcessing(jobId, userId);
+      return;
+    }
+    
+    // Execute the pipeline as a child process
+    const pythonProcess = exec(
+      `python -m pipeline.main --video="${videoPath}" --output="${baseDir}" --job_id="${jobId}"`,
+      { maxBuffer: 1024 * 1024 * 100 } // 100MB buffer for output
+    );
+    
+    // Log stdout and stderr for debugging
+    if (pythonProcess.stdout) {
+      pythonProcess.stdout.on('data', (data) => {
+        console.log(`Pipeline stdout: ${data}`);
+        
+        // Check for progress updates
+        const progressMatch = data.toString().match(/Progress: (\d+)%/);
+        const stageMatch = data.toString().match(/Stage: (.+)/);
+        
+        if (progressMatch && stageMatch) {
+          const progress = parseInt(progressMatch[1]);
+          const stage = stageMatch[1];
+          
+          // Update job progress in database
+          supabaseAdmin
+            .from('video_processing_jobs')
+            .update({ 
+              metadata: { progress, current_stage: stage }
+            })
+            .eq('id', jobId)
+            .then(() => {})
+            .catch((err: Error) => console.error('Failed to update job progress:', err));
+        }
+      });
+    }
+    
+    if (pythonProcess.stderr) {
+      pythonProcess.stderr.on('data', (data) => {
+        console.error(`Pipeline stderr: ${data}`);
+      });
+    }
+    
+    // Handle process completion
+    pythonProcess.on('close', async (code) => {
+      console.log(`Pipeline process exited with code ${code}`);
+      
+      if (code === 0) {
+        // Upload the model to storage
+        try {
+          const modelUrl = await uploadModelToStorage(baseDir, userId, jobId);
+          
+          // Update job as completed with model URL
+          await supabaseAdmin
+            .from('video_processing_jobs')
+            .update({ 
+              status: 'completed',
+              model_url: modelUrl,
+              metadata: { progress: 100, current_stage: 'completed' }
+            })
+            .eq('id', jobId);
+        } catch (uploadError) {
+          console.error('Failed to upload model:', uploadError);
+          markJobAsFailed(jobId, 'Failed to upload final model');
+        }
+      } else {
+        markJobAsFailed(jobId, `Pipeline failed with exit code ${code}`);
+      }
+    });
+  } catch (error) {
+    console.error('Error executing pipeline:', error);
+    markJobAsFailed(jobId, `Failed to execute pipeline: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function updateJobProgress(jobId: string, progress?: number, stage?: string) {
+  const metadata: any = {};
+  
+  if (progress !== undefined) {
+    metadata.progress = progress;
+  }
+  
+  if (stage !== undefined) {
+    metadata.current_stage = stage;
+  }
+  
+  if (Object.keys(metadata).length > 0) {
+    await supabaseAdmin
+      .from('video_processing_jobs')
+      .update({ metadata })
+      .eq('id', jobId);
+  }
+}
+
+async function markJobAsFailed(jobId: string, errorMessage: string) {
+  await supabaseAdmin
+    .from('video_processing_jobs')
+    .update({ 
+      status: 'failed',
+      metadata: { 
+        error: errorMessage,
+        current_stage: 'failed'
+      }
+    })
+    .eq('id', jobId);
+}
+
+async function uploadModelToStorage(modelPath: string, userId: string, jobId: string) {
+  // Find the model file (looking for .ply files)
+  const fs = require('fs');
+  const path = require('path');
+  
+  // Look for the final mesh in the point_clouds directory
+  const pointCloudsDir = path.join(modelPath, 'point_clouds');
+  const modelFilePath = path.join(pointCloudsDir, 'final_mesh.ply');
+  
+  // Check if the file exists, otherwise try simplified_mesh.ply
+  let actualModelPath = modelFilePath;
+  if (!fs.existsSync(actualModelPath)) {
+    actualModelPath = path.join(pointCloudsDir, 'simplified_mesh.ply');
+    if (!fs.existsSync(actualModelPath)) {
+      throw new Error('No model file found');
+    }
+  }
+  
+  // Read the model file
+  const modelBuffer = fs.readFileSync(actualModelPath);
+  
+  // Upload to Supabase storage
+  const { data, error } = await supabaseAdmin
+    .storage
+    .from('models')
+    .upload(`${userId}/${jobId}/model.ply`, modelBuffer, {
+      contentType: 'application/octet-stream',
+      cacheControl: '3600'
+    });
+  
+  if (error) throw error;
+  
+  // Get the public URL
+  const { data: urlData } = supabaseAdmin
+    .storage
+    .from('models')
+    .getPublicUrl(`${userId}/${jobId}/model.ply`);
+  
+  return urlData.publicUrl;
+}
+
+// Add a simulation function for development/testing
+async function simulateProcessing(jobId: string, userId: string) {
+  console.log(`Simulating processing for job ${jobId}`);
+  
+  // Update job to processing
+  await updateJobProgress(jobId, 0, 'starting');
+  
+  // Create a mock model URL for testing
+  const mockModelUrl = 'https://example.com/sample-model.glb';
+  
+  // Update job as completed with mock model URL
+  await supabaseAdmin
+    .from('video_processing_jobs')
+    .update({ 
+      status: 'completed',
+      model_url: mockModelUrl,
+      metadata: { progress: 100, current_stage: 'completed' }
+    })
+    .eq('id', jobId);
+}
+
 
 
 
