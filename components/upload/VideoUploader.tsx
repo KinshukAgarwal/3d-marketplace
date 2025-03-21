@@ -17,7 +17,7 @@ interface VideoUploaderProps {
 }
 
 const SUPPORTED_FORMATS = ['.mp4', '.mov', '.avi'];
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
 
 export default function VideoUploader({ onFileSelect, isUploading, uploadProgress }: VideoUploaderProps) {
   const { toast } = useToast();

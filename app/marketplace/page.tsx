@@ -16,6 +16,7 @@ import { Model } from "@/types/database";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { ModelCarousel } from "@/components/ModelCarousel";
 
 interface ModelWithCreator extends Model {
   creator_name?: string;
@@ -88,9 +89,9 @@ export default function MarketplacePage() {
     filtered.sort((a, b) => {
       switch (sortBy) {
         case 'newest':
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          return new Date(b.created_at || new Date()).getTime() - new Date(a.created_at || new Date()).getTime();
         case 'oldest':
-          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          return new Date(a.created_at || new Date()).getTime() - new Date(b.created_at || new Date()).getTime();
         case 'price-low':
           return a.price - b.price;
         case 'price-high':
@@ -230,6 +231,9 @@ export default function MarketplacePage() {
       }
 
       // Download the file
+      if (!model.model_url) {
+        throw new Error('Model URL is missing');
+      }
       const response = await fetch(model.model_url);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -399,13 +403,10 @@ export default function MarketplacePage() {
                   }
                 }}
               >
-                {model.preview_image_url && (
-                  <img
-                    src={model.preview_image_url}
-                    alt={model.title}
-                    className="object-cover w-full h-full hover:scale-105 transition-transform duration-200"
-                  />
-                )}
+                <ModelCarousel 
+                  modelId={model.id} 
+                  primaryImageUrl={model.preview_image_url || '/placeholder-image.svg'} 
+                />
                 <div className="absolute top-3 right-3">
                   <Badge variant="secondary" className="text-lg font-bold px-3 py-1.5 bg-background/90 backdrop-blur-sm">
                     ${model.price}

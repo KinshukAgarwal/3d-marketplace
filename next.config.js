@@ -15,6 +15,9 @@ const nextConfig = {
     ],
     domains: ['vturbhfjbelphikvumtd.supabase.co', 'example.com']
   },
+  // Disable tracing to avoid the EPERM error
+  traceIgnoreExternals: true,
+  generateBuildId: () => 'build',
   // Add this to potentially help with the static folder issue
   // outputFileTracing: true,
   // Add this to serve files from app/icons

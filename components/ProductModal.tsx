@@ -2,11 +2,14 @@ import { Model } from "@/types/database";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Download, Heart, User } from "lucide-react";
+import { ArrowLeft, Download, Heart, User, Eye3d } from "lucide-react";
 import { LikeButton } from "@/components/LikeButton";
 import { useAuth } from "@/contexts/auth-context";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { ModelCarousel } from "@/components/ModelCarousel";
+import { ModelViewer } from "@/components/ModelViewer";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface ProductModalProps {
   model: Model | null;
@@ -19,6 +22,7 @@ interface ProductModalProps {
 export function ProductModal({ model, isOpen, onClose, onDownload, onLikeChange }: ProductModalProps) {
   const { user } = useAuth();
   const [currentModel, setCurrentModel] = useState(model);
+  const [viewMode, setViewMode] = useState<"images" | "3d">("images");
 
   // Update currentModel when model prop changes
   useEffect(() => {
@@ -28,8 +32,8 @@ export function ProductModal({ model, isOpen, onClose, onDownload, onLikeChange 
   if (!currentModel) return null;
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl h-[90vh] p-0" title={""}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-4xl w-full p-0">
         <div className="h-full overflow-y-auto">
           {/* Header with back button */}
           <div className="sticky top-0 z-10 bg-background border-b p-4 flex items-center">
@@ -40,15 +44,31 @@ export function ProductModal({ model, isOpen, onClose, onDownload, onLikeChange 
           </div>
 
           <div className="grid md:grid-cols-2 gap-6 p-6">
-            {/* Left column - Image and details */}
+            {/* Left column - Image/3D viewer and details */}
             <div className="space-y-6">
-              <div className="aspect-square rounded-lg overflow-hidden bg-muted">
-                <img
-                  src={currentModel.preview_image_url}
-                  alt={currentModel.title}
-                  className="w-full h-full object-cover"
-                />
-              </div>
+              <Tabs defaultValue="images" className="w-full">
+                <TabsList className="w-full">
+                  <TabsTrigger value="images" className="flex-1">Images</TabsTrigger>
+                  <TabsTrigger value="3d" className="flex-1">3D View</TabsTrigger>
+                </TabsList>
+                <TabsContent value="images" className="mt-2">
+                  <div className="aspect-square w-full">
+                    <ModelCarousel 
+                      modelId={currentModel.id} 
+                      primaryImageUrl={currentModel.preview_image_url || '/placeholder-image.svg'} 
+                    />
+                  </div>
+                </TabsContent>
+                <TabsContent value="3d" className="mt-2">
+                  {currentModel.model_url ? (
+                    <ModelViewer modelUrl={currentModel.model_url} />
+                  ) : (
+                    <div className="flex items-center justify-center aspect-square w-full bg-muted rounded-lg">
+                      <p className="text-muted-foreground">3D preview not available</p>
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
 
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold">Description</h3>

@@ -27,11 +27,13 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
 import { CharacterCounter } from "@/components/ui/character-counter";
+import { X } from "lucide-react";
+import { toast } from "@/components/ui/use-toast";
 
-interface UploadResponse {
+type UploadResponse = {
   path: string;
   url: string;
-}
+};
 
 const modelSchema = z.object({
   title: z.string()
@@ -73,13 +75,39 @@ const uploadFileToStorage = async (
   };
 };
 
+// Add this function to handle .blend file uploads
+const handleBlendFileUpload = async (file: File, userId: string): Promise<UploadResponse> => {
+  // Create a FormData object
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('userId', userId);
+  
+  // Send the file to our conversion endpoint
+  const response = await fetch('/api/convert-blend', {
+    method: 'POST',
+    body: formData,
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || 'Failed to convert Blender file');
+  }
+  
+  // Get the converted file URL
+  const data = await response.json();
+  return {
+    path: `converted/${data.path}`,
+    url: data.url
+  };
+};
+
 export default function UploadPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
   const [isUploading, setIsUploading] = useState(false);
   const [modelFile, setModelFile] = useState<File | null>(null);
-  const [previewImage, setPreviewImage] = useState<File | null>(null);
+  const [previewImages, setPreviewImages] = useState<File[]>([]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(modelSchema),
@@ -104,87 +132,74 @@ export default function UploadPage() {
   }, [user, loading, router, toast]);
 
   const onSubmit = async (values: FormValues) => {
-    try {
-      // Verify authentication first
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      if (sessionError || !session) {
-        toast({
-          title: "Authentication Error",
-          description: "Please sign in again to continue",
-          variant: "destructive",
-        });
-        router.push('/auth?redirect=/upload');
-        return;
-      }
-
-      if (!modelFile || !previewImage) {
-        toast({
-          title: "Missing Files",
-          description: "Please provide both a model file and preview image",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
-      if (modelFile.size > MAX_FILE_SIZE || previewImage.size > MAX_FILE_SIZE) {
-        toast({
-          title: "File Too Large",
-          description: "Files must be less than 100MB",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      setIsUploading(true);
-      let uploadedFiles: { model?: UploadResponse; preview?: UploadResponse } = {};
-
-      try {
-        // Upload preview image first
-        if (!user) throw new Error("User not authenticated");
-        uploadedFiles.preview = await uploadFileToStorage(previewImage, user.id, 'previews');
-        
-        // Upload model file
-        uploadedFiles.model = await uploadFileToStorage(modelFile, user.id, 'models');
-
-        // Insert into database
-        const { error: insertError } = await supabase
-          .from('models')
-          .insert([{
-            title: values.title,
-            description: values.description,
-            category: values.category,
-            price: values.price,
-            tags: values.tags,
-            user_id: user.id,
-            model_url: uploadedFiles.model.url,
-            preview_image_url: uploadedFiles.preview.url
-          }]);
-
-        if (insertError) throw insertError;
-
-        toast({
-          title: "Success",
-          description: "Model uploaded successfully",
-        });
-
-        router.push("/dashboard");
-      } catch (error) {
-        // Cleanup on failure
-        if (uploadedFiles.model?.path) {
-          await supabase.storage.from('models').remove([uploadedFiles.model.path]);
-        }
-        if (uploadedFiles.preview?.path) {
-          await supabase.storage.from('previews').remove([uploadedFiles.preview.path]);
-        }
-        throw error;
-      }
-    } catch (error: any) {
-      console.error('Upload error:', error);
+    if (!modelFile) {
       toast({
         title: "Error",
-        description: error.message || 'Failed to upload model',
+        description: "Please select a model file to upload",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setIsUploading(true);
+    
+    try {
+      const userId = user?.id || 'anonymous';
+      let modelData: UploadResponse;
+      
+      // Check if it's a .blend file
+      if (modelFile.name.toLowerCase().endsWith('.blend')) {
+        toast({
+          title: "Converting Blender File",
+          description: "Please wait while we convert your Blender file...",
+        });
+        
+        modelData = await handleBlendFileUpload(modelFile, userId);
+      } else {
+        // Handle regular file uploads as before
+        modelData = await uploadFileToStorage(modelFile, userId, 'models');
+      }
+      
+      // Upload preview images
+      const previewUrls = await Promise.all(
+        previewImages.map(async (file) => {
+          const data = await uploadFileToStorage(file, userId, 'previews');
+          return data.url;
+        })
+      );
+      
+      // Create the model record in the database
+      const { error: insertError } = await supabase
+        .from('models')
+        .insert({
+          title: values.title,
+          description: values.description,
+          category: values.category,
+          price: parseFloat(values.price.toString()),
+          tags: values.tags,
+          model_url: modelData.url,
+          preview_urls: previewUrls,
+          user_id: userId,
+          file_format: modelFile.name.toLowerCase().endsWith('.blend') ? 'glb' : modelFile.name.split('.').pop()?.toLowerCase(),
+          original_filename: modelFile.name
+        });
+      
+      if (insertError) throw insertError;
+      
+      toast({
+        title: "Success",
+        description: "Your model has been uploaded successfully!",
+      });
+      
+      // Reset form
+      form.reset();
+      setModelFile(null);
+      setPreviewImages([]);
+      
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to upload model",
         variant: "destructive",
       });
     } finally {
@@ -379,17 +394,46 @@ export default function UploadPage() {
               <FormLabel>3D Model File</FormLabel>
               <Input
                 type="file"
-                accept=".glb,.gltf,.fbx,.obj"
+                accept=".glb,.gltf,.fbx,.obj,.blend,.stl,.ply"
                 onChange={(e) => setModelFile(e.target.files?.[0] || null)}
               />
             </div>
 
             <div className="space-y-2">
-              <FormLabel>Preview Image</FormLabel>
+              <FormLabel>Preview Images</FormLabel>
+              <div className="grid grid-cols-2 gap-4 mb-2">
+                {previewImages.map((img, index) => (
+                  <div key={index} className="relative">
+                    <img 
+                      src={URL.createObjectURL(img)} 
+                      alt={`Preview ${index}`} 
+                      className="h-24 w-24 object-cover rounded-md"
+                    />
+                    <Button 
+                      variant="destructive" 
+                      size="icon" 
+                      type="button" // Add this to prevent form submission
+                      className="absolute -top-2 -right-2 h-6 w-6 rounded-full"
+                      onClick={(e) => {
+                        e.preventDefault(); // Prevent any default behavior
+                        e.stopPropagation(); // Stop event propagation
+                        setPreviewImages(prev => prev.filter((_, i) => i !== index));
+                      }}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
               <Input
                 type="file"
                 accept="image/*"
-                onChange={(e) => setPreviewImage(e.target.files?.[0] || null)}
+                multiple
+                onChange={(e) => {
+                  if (e.target.files) {
+                    setPreviewImages(prev => [...prev, ...Array.from(e.target.files || [])]);
+                  }
+                }}
               />
             </div>
 
@@ -406,11 +450,6 @@ export default function UploadPage() {
     </div>
   );
 }
-
-
-
-
-
 
 
 

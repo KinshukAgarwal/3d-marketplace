@@ -117,7 +117,7 @@ async function startPipelineProcessing(jobId: string, videoPath: string, userId:
     // Execute the pipeline as a child process
     const pythonProcess = exec(
       `python -m pipeline.main --video="${videoPath}" --output="${baseDir}" --job_id="${jobId}"`,
-      { maxBuffer: 1024 * 1024 * 100 } // 100MB buffer for output
+      { maxBuffer: 1024 * 1024 * 500 } // 500MB buffer for output
     );
     
     // Log stdout and stderr for debugging
@@ -277,6 +277,8 @@ async function simulateProcessing(jobId: string, userId: string) {
     })
     .eq('id', jobId);
 }
+
+
 
 
 
